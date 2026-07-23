@@ -805,7 +805,9 @@ class RGBAlgorithm {
         _perceptualErr(nR, nG, nB, tR, tG, tB);
 
         final improvement = eBef - eAft;
-        final demand = target[ci + ch];
+        final remainingNeed =
+        (target[ci + ch] - canvas[ci + ch]).clamp(0.0, 255.0);
+        final demand = remainingNeed;
         final raw = improvement * stage.errW
             + demand * stage.chanW * 0.07;
 

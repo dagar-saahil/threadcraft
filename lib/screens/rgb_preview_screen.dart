@@ -89,28 +89,29 @@ class _RGBPreviewScreenState
   }
 
   List<int> get _previewBlue {
-    final show = _previewTotalSteps
+    if (widget.bluePath.isEmpty) return [];
+    final show = (widget.bluePath.length * _previewProgress)
+        .round()
         .clamp(0, widget.bluePath.length);
     if (show <= 0) return [];
     return widget.bluePath.sublist(0, show);
   }
 
   List<int> get _previewRed {
-    final afterBlue =
-        _previewTotalSteps - widget.bluePath.length;
-    if (afterBlue <= 0) return [];
-    final show =
-    afterBlue.clamp(0, widget.redPath.length);
+    if (widget.redPath.isEmpty) return [];
+    final show = (widget.redPath.length * _previewProgress)
+        .round()
+        .clamp(0, widget.redPath.length);
+    if (show <= 0) return [];
     return widget.redPath.sublist(0, show);
   }
 
   List<int> get _previewGreen {
-    final afterBlueRed = _previewTotalSteps -
-        widget.bluePath.length -
-        widget.redPath.length;
-    if (afterBlueRed <= 0) return [];
-    final show =
-    afterBlueRed.clamp(0, widget.greenPath.length);
+    if (widget.greenPath.isEmpty) return [];
+    final show = (widget.greenPath.length * _previewProgress)
+        .round()
+        .clamp(0, widget.greenPath.length);
+    if (show <= 0) return [];
     return widget.greenPath.sublist(0, show);
   }
 
