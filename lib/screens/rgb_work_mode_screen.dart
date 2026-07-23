@@ -49,6 +49,13 @@ class _RGBWorkModeScreenState
   int _stepInPhase = 0;
   bool _isPaused = false;
 
+  // ── Color-switch batching (every 150 nails) ──
+  static const int _batchSize = 150;
+  int _stepsSinceSwitch = 0;
+  int _blueSaved = 0;
+  int _redSaved = 0;
+  int _greenSaved = 0;
+
   // ── Voice ──
   bool _voiceOn = false;
   double _voiceSpeed = 1.0;
@@ -108,11 +115,32 @@ class _RGBWorkModeScreenState
           ? _currentPath[_stepInPhase + 1]
           : _currentNail;
 
+  int _liveProgressFor(int phase) {
+    if (phase == _phase) return _stepInPhase;
+    switch (phase) {
+      case 0: return _blueSaved;
+      case 1: return _redSaved;
+      default: return _greenSaved;
+    }
+  }
+
+  bool _isChannelFullyDone(int phase) {
+    final path = phase == 0
+        ? widget.bluePath
+        : phase == 1
+        ? widget.redPath
+        : widget.greenPath;
+    if (path.isEmpty) return true;
+    return _liveProgressFor(phase) >= path.length - 2;
+  }
+
   bool get _isPhaseFinished =>
       _stepInPhase >= _currentPath.length - 2;
 
   bool get _allDone =>
-      _phase >= 2 && _isPhaseFinished;
+      _isChannelFullyDone(0) &&
+          _isChannelFullyDone(1) &&
+          _isChannelFullyDone(2);
 
   double get _phaseProgress =>
       _currentPath.isEmpty
@@ -130,24 +158,13 @@ class _RGBWorkModeScreenState
   double get _actualOverallProgress {
     final total = _totalSteps;
     if (total == 0) return 0;
-    int done = 0;
-    if (_phase > 0) done += widget.bluePath.length;
-    if (_phase > 1) done += widget.redPath.length;
-    done += _stepInPhase;
+    final done = _liveProgressFor(0) +
+        _liveProgressFor(1) +
+        _liveProgressFor(2);
     return (done / total).clamp(0.0, 1.0);
   }
 
-  double get _overallProgress {
-    final total = widget.bluePath.length +
-        widget.redPath.length +
-        widget.greenPath.length;
-    if (total == 0) return 0;
-    int done = 0;
-    if (_phase > 0) done += widget.bluePath.length;
-    if (_phase > 1) done += widget.redPath.length;
-    done += _stepInPhase;
-    return (done / total).clamp(0.0, 1.0);
-  }
+  double get _overallProgress => _actualOverallProgress;
 
   // Preview paths for completion slider
   // ── FIXED: Preview all 3 phases based on combined progress ──
@@ -194,6 +211,17 @@ class _RGBWorkModeScreenState
     super.initState();
     _phase = widget.startPhase;
     _stepInPhase = widget.startStep;
+    _stepsSinceSwitch = 0;
+    if (widget.startPhase == 0) {
+      _blueSaved = widget.startStep;
+    } else if (widget.startPhase == 1) {
+      _blueSaved = widget.bluePath.length;
+      _redSaved = widget.startStep;
+    } else {
+      _blueSaved = widget.bluePath.length;
+      _redSaved = widget.redPath.length;
+      _greenSaved = widget.startStep;
+    }
 // Start preview at real current progress
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -252,36 +280,71 @@ class _RGBWorkModeScreenState
     if (_allDone) return;
     HapticFeedback.lightImpact();
 
-    if (_isPhaseFinished && _phase < 2) {
+    final channelDone =
+        _stepInPhase >= _currentPath.length - 2;
+    final batchDone = _stepsSinceSwitch >= _batchSize;
+
+    if (channelDone || batchDone) {
       _advancePhase();
       return;
     }
 
-    setState(() => _stepInPhase++);
+    setState(() {
+      _stepInPhase++;
+      _stepsSinceSwitch++;
+    });
     _speakStep();
   }
 
   void _prevStep() {
-    if (_stepInPhase > 0) {
-      HapticFeedback.lightImpact();
-      setState(() => _stepInPhase--);
-    } else if (_phase > 0) {
+    if (_stepInPhase > 0 && _stepsSinceSwitch > 0) {
       HapticFeedback.lightImpact();
       setState(() {
-        _phase--;
-        _stepInPhase = _currentPath.length - 1;
+        _stepInPhase--;
+        _stepsSinceSwitch--;
+      });
+    } else {
+      HapticFeedback.lightImpact();
+      setState(() {
+        if (_phase == 0) _blueSaved = _stepInPhase;
+        if (_phase == 1) _redSaved = _stepInPhase;
+        if (_phase == 2) _greenSaved = _stepInPhase;
+
+        final prev = (_phase + 2) % 3;
+        _phase = prev;
+        _stepInPhase = prev == 0
+            ? _blueSaved
+            : prev == 1
+            ? _redSaved
+            : _greenSaved;
+        _stepsSinceSwitch = 0;
       });
     }
   }
 
   void _advancePhase() {
     setState(() {
-      _phase++;
-      _stepInPhase = 0;
+      if (_phase == 0) _blueSaved = _stepInPhase;
+      if (_phase == 1) _redSaved = _stepInPhase;
+      if (_phase == 2) _greenSaved = _stepInPhase;
+
+      int next = (_phase + 1) % 3;
+      int guard = 0;
+      while (guard < 3 && _isChannelFullyDone(next)) {
+        next = (next + 1) % 3;
+        guard++;
+      }
+
+      _phase = next;
+      _stepInPhase = next == 0
+          ? _blueSaved
+          : next == 1
+          ? _redSaved
+          : _greenSaved;
+      _stepsSinceSwitch = 0;
       _showSwitchAlert = true;
     });
 
-    // Flash switch alert
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) setState(() => _showSwitchAlert = false);
     });
@@ -466,7 +529,7 @@ class _RGBWorkModeScreenState
       child: Row(
         children: List.generate(3, (i) {
           final isActive = i == _phase;
-          final isDone = i < _phase;
+          final isDone = _isChannelFullyDone(i);
           final c = _phaseColors[i];
 
           return Expanded(
@@ -474,9 +537,16 @@ class _RGBWorkModeScreenState
               onTap: isDone
                   ? () {
                 setState(() {
+                  if (_phase == 0) _blueSaved = _stepInPhase;
+                  if (_phase == 1) _redSaved = _stepInPhase;
+                  if (_phase == 2) _greenSaved = _stepInPhase;
                   _phase = i;
-                  _stepInPhase =
-                      _currentPath.length - 1;
+                  _stepInPhase = i == 0
+                      ? _blueSaved
+                      : i == 1
+                      ? _redSaved
+                      : _greenSaved;
+                  _stepsSinceSwitch = 0;
                 });
               }
                   : null,
